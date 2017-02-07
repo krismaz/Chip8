@@ -18,8 +18,9 @@ draw, last_draw = True, 0
 
 
 def getKeys():
+    global keys
     keys = [False] * 16
-    #keys[getKeyPress()] = True
+    keys[getKeyPress()] = True
 
 
 def getKeyPress():
@@ -29,18 +30,17 @@ def getKeyPress():
         if char == 'c':
             raise Exception('C for exit')
         key = keymap.keymap.get(char, None)
-        print(char, key, file= sys.stderr)
     return key
 
 
 def cycle():
-    global PC, IDX, opcode, registers, memory, screen, draw, delay_timer, sound_timer
+    global PC, IDX, opcode, registers, memory, screen, draw, delay_timer, sound_timer, stack
     opcode = (memory[PC] << 8) + memory[PC + 1]
     first, second, third, fourth = (opcode & 0xF000) >> 12, (
         opcode & 0x0F00) >> 8, (opcode & 0x00F0) >> 4, opcode & 0x000F
     if opcode & 0xFFFF != opcode:
         raise Exception("BAD OPCODE" + hex(opcode))
-    PC += 2
+    PC = (PC + 2) & 0x0FFF
     if first == 0:
         if opcode == 0x00E0:
             screen = [[0] * 64 for i in range(32)]
@@ -66,7 +66,7 @@ def cycle():
         registers[second] = opcode & 0x00FF
     elif first == 7:
         registers[second] = (
-            registers[second] + (opcode & 0x00FF)) % 0xFF
+            registers[second] + (opcode & 0x00FF)) % 0x100
     elif first == 8:
         if fourth == 0:
             registers[second] = registers[
@@ -86,14 +86,14 @@ def cycle():
                 third]
             if registers[second] > 0xFF:
                 registers[0xF] = 1
-                registers[second] %= 0xFF
+                registers[second] %= 0x100
         elif fourth == 5:
             registers[0xF] = 1
             registers[second] -= registers[
                 third]
             if registers[second] < 0:
                 registers[0xF] = 0
-                registers[second] %= 0xFF
+                registers[second] %= 0x100
         elif fourth == 6:
             registers[0xF] = registers[second] & 0x01
             registers[second] >>= 1
@@ -103,10 +103,10 @@ def cycle():
                 third] - registers[second]
             if registers[second] < 0:
                 registers[0xF] = 0
-                registers[second] %= 0xFF
+                registers[second] %= 0x100
         elif fourth == 0xE:
             registers[0xF] = registers[second] & 0x80 >> 7
-            registers[second] = (registers[second] << 1) % 0xFF
+            registers[second] = (registers[second] << 1) % 0x100
         else:
             raise Exception('Unknown opcode: ' + hex(opcode))
     elif first == 9:
@@ -115,24 +115,24 @@ def cycle():
     elif first == 0xA:
         IDX = opcode & 0x0FFF
     elif first == 0xB:
-        PC = ((opcode & 0x0FFF) + registers[0]) % 0xFFFF
+        PC = ((opcode & 0x0FFF) + registers[0]) & 0x0FFF
     elif first == 0xC:
         registers[second] = random.randrange(
             0xFF) & opcode
     elif first == 0xD:
-        vx, vy, n = registers[second], registers[
-            third], fourth
+        vx, vy, n = registers[second] & 0x3F, registers[
+            third] & 0x1F, fourth
         if not n:
             raise Exception('16 BIT Sprite')
         registers[0xF] = 0
         for line in range(n):
             pixels = memory[IDX + line]
             for bit in range(8):
-                if vx + bit >= 64 or vy + line >= 32:
-                    break
-                if screen[vy + line][vx + bit] & (pixels & (1 << (7 - bit))):
+                if vx + bit >= 64 or vy + line >= 31:
+                    continue
+                if screen[vy + line][vx + bit] & (pixels & (0x80 >> bit)):
                     registers[0xF] = 1
-                screen[vy + line][vx + bit] ^= pixels & (1 << (7 - bit))
+                screen[vy + line][vx + bit] ^= pixels & (0x80 >> bit)
         draw = True
     elif first == 0xE:
         if opcode & 0x00FF == 0x9E:
@@ -163,9 +163,11 @@ def cycle():
             memory[IDX + 1] = (registers[second] % 100) // 10
             memory[IDX + 2] = registers[second] % 10
         elif opcode & 0x00FF == 0x55:
-            memory[IDX:IDX + second] = registers[:second]
+            memory[IDX:IDX + second + 1] = registers[:second + 1]
+            IDX += second + 1
         elif opcode & 0x00FF == 0x65:
-            registers[:second] = memory[IDX:IDX + second]
+            registers[:second + 1] = memory[IDX:IDX + second + 1]
+            IDX += second + 1
         else:
             raise Exception('Unknown opcode: ' + hex(opcode))
     else:
@@ -199,6 +201,6 @@ while True:
     print('V: ', [hex(v) for v in registers],
           'IDX: ', hex(IDX), 'OP: ', hex(opcode), 'STK: ', [hex(v) for v in stack], len(memory), file=sys.stderr)
     cycle()
-    time.sleep(0.01)
-    if draw and time.time() - last_draw > 0.05:
+    if draw:
         draw_screen()
+        #time.sleep(0.01)
